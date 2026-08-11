@@ -96,17 +96,25 @@ export async function deliverOrder(orderId: number) {
     file_name_snapshot: string | null;
     file_path_kz_snapshot?: string | null;
     file_name_kz_snapshot?: string | null;
+    file_url_snapshot?: string | null;
+    file_url_kz_snapshot?: string | null;
+    material_files_snapshot?: MaterialFile[] | null;
+    material_files_kz_snapshot?: MaterialFile[] | null;
     quantity: number;
   }>;
 
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
-    const path_ru = item.file_path_snapshot;
-    const path_kz = (item as any).file_path_kz_snapshot;
-    const url_ru = (item as any).file_url_snapshot;
-    const url_kz = (item as any).file_url_kz_snapshot;
+    // Orders placed before multi-file materials existed only have the single
+    // *_snapshot columns — fall back to those when the new arrays are empty.
+    const materialsRu = item.material_files_snapshot?.length
+      ? item.material_files_snapshot
+      : legacyAsMaterials(item.file_path_snapshot, item.file_name_snapshot, item.file_url_snapshot);
+    const materialsKz = item.material_files_kz_snapshot?.length
+      ? item.material_files_kz_snapshot
+      : legacyAsMaterials(item.file_path_kz_snapshot, item.file_name_kz_snapshot, item.file_url_kz_snapshot);
 
-    if (!path_ru && !url_ru) {
+    if (materialsRu.length === 0 && materialsKz.length === 0) {
       await tg("sendMessage", {
         chat_id: order.telegram_id,
         text: `⚠️ Файл для «${item.name_snapshot}» не настроен. Продавец вышлет вручную.`,
@@ -114,7 +122,7 @@ export async function deliverOrder(orderId: number) {
       continue;
     }
 
-    if (path_kz || url_kz) {
+    if (materialsKz.length > 0) {
       // Prompt for language
       await tg("sendMessage", {
         chat_id: order.telegram_id,
@@ -130,24 +138,7 @@ export async function deliverOrder(orderId: number) {
         })
       });
     } else {
-      // Send directly
-      if (url_ru) {
-        for (let i = 0; i < (item.quantity || 1); i++) {
-          await tg("sendMessage", {
-            chat_id: order.telegram_id,
-            text: `📁 <b>${item.name_snapshot}</b>\n\n📥 <a href="${url_ru}">Нажмите здесь, чтобы скачать файл</a>`,
-            parse_mode: "HTML"
-          });
-        }
-      } else {
-        await sendFileToUser(
-          order.telegram_id,
-          path_ru!,
-          item.file_name_snapshot || "file.bin",
-          item.name_snapshot,
-          item.quantity || 1
-        );
-      }
+      await sendMaterials(order.telegram_id, materialsRu, item.name_snapshot, item.quantity || 1);
     }
   }
 
@@ -162,6 +153,41 @@ export async function deliverOrder(orderId: number) {
     .eq("id", orderId);
   if (upErr) throw new Error(upErr.message);
   return { ok: true as const };
+}
+
+export type MaterialFile = { path?: string | null; name?: string | null; url?: string | null };
+
+// Pre-multi-file orders only have a single path/name/url per language — wrap
+// that into the same array shape so delivery code has one path to follow.
+function legacyAsMaterials(path?: string | null, name?: string | null, url?: string | null): MaterialFile[] {
+  if (url) return [{ url }];
+  if (path) return [{ path, name }];
+  return [];
+}
+
+// Sends every material for one order item — the deliverable can be a single
+// file or a set of photos (e.g. several worksheet pages), each sent in turn.
+export async function sendMaterials(chat_id: number, materials: MaterialFile[], caption: string, quantity: number) {
+  // With several photos for one material, repeating the product name on
+  // every single one reads as spam — caption only the first file. A plain
+  // for-loop (not forEach) so each send is awaited before the next starts.
+  for (let idx = 0; idx < materials.length; idx++) {
+    const m = materials[idx];
+    const itemCaption = idx === 0 ? caption : "";
+    if (m.url) {
+      for (let i = 0; i < (quantity || 1); i++) {
+        await tg("sendMessage", {
+          chat_id,
+          text: itemCaption
+            ? `📁 <b>${itemCaption}</b>\n\n📥 <a href="${m.url}">Нажмите здесь, чтобы скачать файл</a>`
+            : `📥 <a href="${m.url}">Нажмите здесь, чтобы скачать файл</a>`,
+          parse_mode: "HTML",
+        });
+      }
+    } else if (m.path) {
+      await sendFileToUser(chat_id, m.path, m.name || "file.bin", itemCaption, quantity);
+    }
+  }
 }
 
 export async function sendFileToUser(chat_id: number, path: string, downloadName: string, caption: string, quantity: number) {

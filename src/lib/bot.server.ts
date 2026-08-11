@@ -356,6 +356,23 @@ async function askCountry(chat_id: number, telegram_id: number, forCheckout = fa
   });
 }
 
+// A product's deliverable material: either rows in product_material_files
+// (the current multi-file/photo uploader) or, for products saved before it
+// existed, the single legacy file_path/file_url column for that language.
+function materialsForProduct(product: any, lang: "ru" | "kz"): Array<{ file_path?: string; file_name?: string | null; url?: string }> {
+  const rows = ((product?.product_material_files as any[]) || [])
+    .filter((f) => f.language === lang)
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map((f) => ({ file_path: f.file_path as string, file_name: (f.file_name as string) ?? null }));
+  if (rows.length) return rows;
+  const legacyUrl = lang === "ru" ? product?.file_url : product?.file_url_kz;
+  const legacyPath = lang === "ru" ? product?.file_path : product?.file_path_kz;
+  const legacyName = lang === "ru" ? product?.file_name : product?.file_name_kz;
+  if (legacyUrl) return [{ url: legacyUrl }];
+  if (legacyPath) return [{ file_path: legacyPath, file_name: legacyName ?? null }];
+  return [];
+}
+
 async function placeOrder(chat_id: number, user: BotUser, country_code: string) {
   const telegram_id = user.telegram_id;
   const s = await db();
@@ -366,7 +383,7 @@ async function placeOrder(chat_id: number, user: BotUser, country_code: string) 
     .single();
   const { data: items } = await s
     .from("cart_items")
-    .select("id, quantity, products(id, name, price, currency, file_path, file_name, file_path_kz, file_name_kz, file_url, file_url_kz, country_prices)")
+    .select("id, quantity, products(id, name, price, currency, file_path, file_name, file_path_kz, file_name_kz, file_url, file_url_kz, country_prices, product_material_files(language, file_path, file_name, sort_order))")
     .eq("user_key", `tg_${telegram_id}`);
   if (!items?.length) {
     await tg("sendMessage", { chat_id, text: "🛒 Корзина пуста." });
@@ -424,18 +441,25 @@ async function placeOrder(chat_id: number, user: BotUser, country_code: string) 
         displayPrice = await convertAmount(it.products?.price ?? 0, it.products?.currency || "KZT", currency);
       }
       
+      const materialsRu = materialsForProduct(it.products, "ru");
+      const materialsKz = materialsForProduct(it.products, "kz");
+
       return {
         order_id: order.id,
         product_id: it.products?.id,
         name_snapshot: it.products?.name,
         price_snapshot: displayPrice,
         quantity: it.quantity,
+        // Legacy single-file columns kept for older order rows/tooling; the
+        // JSONB arrays below are what delivery actually reads from now on.
         file_path_snapshot: it.products?.file_path ?? null,
         file_name_snapshot: it.products?.file_name ?? null,
         file_path_kz_snapshot: it.products?.file_path_kz ?? null,
         file_name_kz_snapshot: it.products?.file_name_kz ?? null,
         file_url_snapshot: it.products?.file_url ?? null,
         file_url_kz_snapshot: it.products?.file_url_kz ?? null,
+        material_files_snapshot: materialsRu.map((m) => ({ path: m.file_path ?? null, name: m.file_name ?? null, url: m.url ?? null })),
+        material_files_kz_snapshot: materialsKz.map((m) => ({ path: m.file_path ?? null, name: m.file_name ?? null, url: m.url ?? null })),
       };
     }),
   );
@@ -734,28 +758,12 @@ export async function handleUpdate(update: any) {
           return;
         }
 
-        const { sendFileToUser } = await import("./orders.functions");
-        const path = lang === "ru" ? item.file_path_snapshot : item.file_path_kz_snapshot;
-        const name = lang === "ru" ? item.file_name_snapshot : item.file_name_kz_snapshot;
-        const url = lang === "ru" ? item.file_url_snapshot : item.file_url_kz_snapshot;
+        const { sendMaterials } = await import("./orders.functions");
+        const materials = lang === "ru" ? item.material_files_snapshot : item.material_files_kz_snapshot;
 
-        if (url) {
-          for (let i = 0; i < (item.quantity || 1); i++) {
-            await tg("sendMessage", {
-              chat_id,
-              text: `📁 <b>${item.name_snapshot}</b> (${lang === "ru" ? "Русский" : "Қазақша"})\n\n📥 <a href="${url}">Нажмите здесь, чтобы скачать файл</a>`,
-              parse_mode: "HTML"
-            });
-          }
-        } else if (path) {
-          await tg("sendMessage", { chat_id, text: `⏳ Загружаю файл (${lang === "ru" ? "Русский" : "Қазақша"})...` });
-          await sendFileToUser(
-            chat_id,
-            path,
-            name || "file.bin",
-            item.name_snapshot,
-            item.quantity || 1
-          );
+        if (materials?.length) {
+          await tg("sendMessage", { chat_id, text: `⏳ Загружаю материалы (${lang === "ru" ? "Русский" : "Қазақша"})...` });
+          await sendMaterials(chat_id, materials, item.name_snapshot, item.quantity || 1);
         } else {
           await tg("sendMessage", { chat_id, text: `⚠️ Файл (${lang === "ru" ? "Русский" : "Қазақша"}) не настроен. Продавец вышлет вручную.` });
         }

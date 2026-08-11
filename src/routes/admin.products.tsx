@@ -26,6 +26,7 @@ export const Route = createFileRoute("/admin/products")({
 });
 
 type Img = { id?: string; image_path: string; sort_order: number };
+type MaterialFile = { id?: string; file_path: string; file_name: string | null; sort_order: number };
 type Product = {
   id?: string;
   category_id: string | null;
@@ -44,6 +45,7 @@ type Product = {
   file_url?: string | null;
   file_url_kz?: string | null;
   product_images?: Img[];
+  product_material_files?: (MaterialFile & { language: "ru" | "kz" })[];
   country_prices?: Record<string, number>;
 };
 
@@ -111,6 +113,26 @@ async function uploadFile(file: File, bucket: "product-images" | "product-files"
   return { path, name };
 }
 
+function MaterialFilesList({ files, onRemove }: { files: MaterialFile[]; onRemove: (idx: number) => void }) {
+  if (files.length === 0) return null;
+  return (
+    <ul className="text-sm space-y-1 mt-1">
+      {files.map((f, idx) => (
+        <li key={`${f.file_path}-${idx}`} className="flex items-center justify-between gap-2 text-muted-foreground">
+          <span className="truncate">📎 {f.file_name || f.file_path}</span>
+          <button
+            type="button"
+            onClick={() => onRemove(idx)}
+            className="shrink-0 text-destructive hover:underline"
+          >
+            Убрать
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ProductsPage() {
   const qc = useQueryClient();
   const products = useQuery({ queryKey: ["products"], queryFn: () => listProducts() });
@@ -125,6 +147,8 @@ function ProductsPage() {
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Product | null>(null);
   const [images, setImages] = useState<Img[]>([]);
+  const [materialFilesRu, setMaterialFilesRu] = useState<MaterialFile[]>([]);
+  const [materialFilesKz, setMaterialFilesKz] = useState<MaterialFile[]>([]);
   const [saving, setSaving] = useState(false);
 
   // Клиентская фильтрация по названию / ключевым словам / описанию.
@@ -141,6 +165,8 @@ function ProductsPage() {
   function startNew() {
     setEditing({ ...empty });
     setImages([]);
+    setMaterialFilesRu([]);
+    setMaterialFilesKz([]);
   }
   function startEdit(p: any) {
     setEditing({
@@ -164,6 +190,15 @@ function ProductsPage() {
     });
     const imgs = (p.product_images ?? []).slice().sort((a: Img, b: Img) => a.sort_order - b.sort_order);
     setImages(imgs);
+
+    const materialRows = (p.product_material_files ?? []) as (MaterialFile & { language: "ru" | "kz" })[];
+    const ru = materialRows.filter((f) => f.language === "ru").sort((a, b) => a.sort_order - b.sort_order);
+    const kz = materialRows.filter((f) => f.language === "kz").sort((a, b) => a.sort_order - b.sort_order);
+    // Products saved before multi-file materials existed only have the
+    // single legacy file_path column — show that as one item so it stays
+    // visible/editable instead of silently disappearing from the list.
+    setMaterialFilesRu(ru.length ? ru : p.file_path ? [{ file_path: p.file_path, file_name: p.file_name, sort_order: 0 }] : []);
+    setMaterialFilesKz(kz.length ? kz : p.file_path_kz ? [{ file_path: p.file_path_kz, file_name: p.file_name_kz, sort_order: 0 }] : []);
   }
 
   async function onImagesChange(files: FileList | null) {
@@ -180,23 +215,19 @@ function ProductsPage() {
     }
   }
 
-  async function onFileChange(file: File | null) {
-    if (!file) return;
+  async function onMaterialFilesChange(files: FileList | null, lang: "ru" | "kz") {
+    if (!files) return;
+    const setList = lang === "ru" ? setMaterialFilesRu : setMaterialFilesKz;
+    const current = lang === "ru" ? materialFilesRu : materialFilesKz;
+    const uploaded: MaterialFile[] = [];
     try {
-      const r = await uploadFile(file, "product-files");
-      setEditing((prev) => prev ? { ...prev, file_path: r.path, file_name: r.name } : prev);
+      for (const f of Array.from(files)) {
+        const r = await uploadFile(f, "product-files");
+        uploaded.push({ file_path: r.path, file_name: r.name, sort_order: current.length + uploaded.length });
+      }
+      setList([...current, ...uploaded]);
     } catch (e: any) {
-      alert("Ошибка загрузки файла: " + e.message);
-    }
-  }
-
-  async function onFileChangeKz(file: File | null) {
-    if (!file) return;
-    try {
-      const r = await uploadFile(file, "product-files");
-      setEditing((prev) => prev ? { ...prev, file_path_kz: r.path, file_name_kz: r.name } : prev);
-    } catch (e: any) {
-      alert("Ошибка загрузки файла (KZ): " + e.message);
+      alert(`Ошибка загрузки файла${lang === "kz" ? " (KZ)" : ""}: ${e.message}`);
     }
   }
 
@@ -220,18 +251,24 @@ function ProductsPage() {
           currency: editing.currency,
           is_active: editing.is_active,
           sort_order: Number(editing.sort_order),
-          file_path: editing.file_path,
-          file_name: editing.file_name,
-          file_path_kz: editing.file_path_kz,
-          file_name_kz: editing.file_name_kz,
+          // The multi-file uploader below is now the source of truth for the
+          // deliverable — legacy single-file columns are cleared on save.
+          file_path: null,
+          file_name: null,
+          file_path_kz: null,
+          file_name_kz: null,
           file_url: editing.file_url,
           file_url_kz: editing.file_url_kz,
           image_paths: images.map((i) => i.image_path),
+          material_files_ru: materialFilesRu.map((f) => ({ file_path: f.file_path, file_name: f.file_name })),
+          material_files_kz: materialFilesKz.map((f) => ({ file_path: f.file_path, file_name: f.file_name })),
           country_prices: editing.country_prices,
         },
       });
       setEditing(null);
       setImages([]);
+      setMaterialFilesRu([]);
+      setMaterialFilesKz([]);
       qc.invalidateQueries({ queryKey: ["products"] });
     } catch (e: any) {
       alert("Ошибка сохранения: " + (e?.message || String(e)));
@@ -402,11 +439,9 @@ function ProductsPage() {
 
 
           <div className="space-y-2 pt-4 border-t">
-            <Label htmlFor="file-ru">📄 Файл товара (Русский)</Label>
-            <Input id="file-ru" type="file" onChange={(e) => onFileChange(e.target.files?.[0] ?? null)} />
-            {editing.file_name && (
-              <p className="text-sm text-muted-foreground">📎 {editing.file_name}</p>
-            )}
+            <Label htmlFor="file-ru">📄 Материал (Русский) — можно несколько файлов/фото</Label>
+            <Input id="file-ru" type="file" multiple onChange={(e) => onMaterialFilesChange(e.target.files, "ru")} />
+            <MaterialFilesList files={materialFilesRu} onRemove={(idx) => setMaterialFilesRu(materialFilesRu.filter((_, i) => i !== idx))} />
             <div className="pt-2">
               <Label>Или внешняя ссылка на файл (Русский)</Label>
               <Input
@@ -414,15 +449,16 @@ function ProductsPage() {
                 onChange={(e) => setEditing({ ...editing, file_url: e.target.value || null })}
                 placeholder="https://drive.google.com/..."
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Ссылка используется, только если выше не загружено ни одного файла.
+              </p>
             </div>
           </div>
 
           <div className="space-y-2 pt-4 border-t">
-            <Label htmlFor="file-kz">📄 Файл товара (Қазақша)</Label>
-            <Input id="file-kz" type="file" onChange={(e) => onFileChangeKz(e.target.files?.[0] ?? null)} />
-            {editing.file_name_kz && (
-              <p className="text-sm text-muted-foreground">📎 {editing.file_name_kz}</p>
-            )}
+            <Label htmlFor="file-kz">📄 Материал (Қазақша) — можно несколько файлов/фото</Label>
+            <Input id="file-kz" type="file" multiple onChange={(e) => onMaterialFilesChange(e.target.files, "kz")} />
+            <MaterialFilesList files={materialFilesKz} onRemove={(idx) => setMaterialFilesKz(materialFilesKz.filter((_, i) => i !== idx))} />
             <div className="pt-2">
               <Label>Или внешняя ссылка на файл (Қазақша)</Label>
               <Input
@@ -432,7 +468,7 @@ function ProductsPage() {
               />
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Если загрузить только Русский файл, бот не будет спрашивать язык при выдаче заказа.
+              Если загрузить материал только на русском, бот не будет спрашивать язык при выдаче заказа.
             </p>
           </div>
 
@@ -495,10 +531,15 @@ function ProductsPage() {
                         .filter(Boolean)
                         .join(", ") || "без категории"
                     : p.categories?.name || "без категории"} · {p.price} {p.currency}
-                  {!p.file_path && !p.file_path_kz && !p.file_url && !p.file_url_kz && <span className="text-destructive"> · нет файла</span>}
-                  {(p.file_path || p.file_url) && (p.file_path_kz || p.file_url_kz) && <span className="text-green-500"> · 🇷🇺🇰🇿</span>}
-                  {(p.file_path || p.file_url) && !p.file_path_kz && !p.file_url_kz && <span className="text-muted-foreground"> · 🇷🇺</span>}
-                  {!p.file_path && !p.file_url && (p.file_path_kz || p.file_url_kz) && <span className="text-muted-foreground"> · 🇰🇿</span>}
+                  {(() => {
+                    const materials = (p.product_material_files ?? []) as { language: "ru" | "kz" }[];
+                    const hasRu = materials.some((f) => f.language === "ru") || !!p.file_path || !!p.file_url;
+                    const hasKz = materials.some((f) => f.language === "kz") || !!p.file_path_kz || !!p.file_url_kz;
+                    if (!hasRu && !hasKz) return <span className="text-destructive"> · нет файла</span>;
+                    if (hasRu && hasKz) return <span className="text-green-500"> · 🇷🇺🇰🇿</span>;
+                    if (hasRu) return <span className="text-muted-foreground"> · 🇷🇺</span>;
+                    return <span className="text-muted-foreground"> · 🇰🇿</span>;
+                  })()}
                 </div>
               </div>
               <div className="flex gap-1 shrink-0">
