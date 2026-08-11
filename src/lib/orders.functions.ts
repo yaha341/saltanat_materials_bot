@@ -198,13 +198,27 @@ export async function sendFileToUser(chat_id: number, path: string, downloadName
         const bytes = new Uint8Array(await dl.arrayBuffer());
         const filename = downloadName || "file.bin";
         const mime = dl.type || "application/octet-stream";
-        
+        // Telegram renders sendPhoto inline in the chat — what the client asked
+        // for instead of a downloadable file attachment. sendPhoto's own upload
+        // limit is 10MB and it rejects some image subtypes, so fall back to
+        // sendDocument whenever it fails (or wasn't attempted).
+        const tryAsPhoto = mime.startsWith("image/") && fileSize < 10 * 1024 * 1024;
+
         for (let i = 0; i < (quantity || 1); i++) {
-          await tgSendMultipart(
-            "sendDocument",
-            { chat_id, caption },
-            { field: "document", filename, bytes, contentType: mime },
-          );
+          let res = tryAsPhoto
+            ? await tgSendMultipart(
+                "sendPhoto",
+                { chat_id, caption },
+                { field: "photo", filename, bytes, contentType: mime },
+              )
+            : null;
+          if (!res || !res.ok) {
+            res = await tgSendMultipart(
+              "sendDocument",
+              { chat_id, caption },
+              { field: "document", filename, bytes, contentType: mime },
+            );
+          }
         }
         sentAsFile = true;
       }
