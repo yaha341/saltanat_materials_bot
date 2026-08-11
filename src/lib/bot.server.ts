@@ -439,7 +439,8 @@ async function placeOrder(chat_id: number, user: BotUser, country_code: string) 
       };
     }),
   );
-  await s.from("order_items").insert(rows);
+  const { error: itemsErr } = await s.from("order_items").insert(rows);
+  if (itemsErr) console.error(`[bot] order_items insert failed for order ${order.id}`, itemsErr);
   await s.from("cart_items").delete().eq("user_key", `tg_${telegram_id}`);
 
   await setState(telegram_id, { mode: "awaiting_proof", pending_order_id: order.id as number });
