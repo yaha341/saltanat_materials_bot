@@ -14,7 +14,7 @@ export const getInstagramConnectUrlFn = createServerFn({ method: "GET" }).handle
   const origin =
     process.env.PUBLIC_APP_URL ||
     (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "") ||
-    "https://razvivashka.vercel.app";
+    "https://saltanat-materials-bot-7yy5.vercel.app";
 
   const redirectUrl = `${origin.replace(/\/$/, "")}/admin/instagram?connected=1`;
   return await getZernioConnectUrl("instagram", undefined, redirectUrl);
@@ -36,7 +36,7 @@ export const registerInstagramWebhookFn = createServerFn({ method: "POST" }).han
   const origin =
     process.env.PUBLIC_APP_URL ||
     (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "") ||
-    "https://razvivashka.vercel.app";
+    "https://saltanat-materials-bot-7yy5.vercel.app";
 
   const webhookUrl = `${origin.replace(/\/$/, "")}/api/public/zernio/webhook`;
   return await registerZernioWebhook(webhookUrl);

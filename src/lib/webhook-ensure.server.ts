@@ -1,4 +1,4 @@
-/** Self-heal Telegram webhooks for shop + VIP bots (razvivashka). */
+/** Self-heal Telegram webhooks for shop + VIP bots (saltanat_materials_bot). */
 
 type EnsureOne = {
   name: "SHOP" | "VIP";
@@ -19,7 +19,7 @@ function publicAppOrigin(): string {
       ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
       : "") ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
-    "https://razvivashka.vercel.app"
+    "https://saltanat-materials-bot-7yy5.vercel.app"
   ).replace(/\/$/, "");
 }
 

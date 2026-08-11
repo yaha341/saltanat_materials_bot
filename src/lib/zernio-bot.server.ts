@@ -15,7 +15,7 @@ function appUrl(): string {
     process.env.PUBLIC_APP_URL ||
     (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "") ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
-    "https://razvivashka.vercel.app"
+    "https://saltanat-materials-bot-7yy5.vercel.app"
   ).replace(/\/$/, "");
 }
 

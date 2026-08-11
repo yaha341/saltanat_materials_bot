@@ -77,15 +77,15 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Print KZ Art" },
-      { name: "description", content: "Print KZ Art — Telegram-бот для продажи цифровых товаров: каталог и приём заказов." },
-      { name: "author", content: "Print KZ Art" },
-      { property: "og:title", content: "Print KZ Art" },
-      { property: "og:description", content: "Print KZ Art — Telegram-бот для продажи цифровых товаров: каталог и приём заказов." },
+      { title: "SALTANAT | Материалы для педагога" },
+      { name: "description", content: "SALTANAT — Telegram-бот с материалами для педагога: каталог и приём заказов." },
+      { name: "author", content: "SALTANAT" },
+      { property: "og:title", content: "SALTANAT | Материалы для педагога" },
+      { property: "og:description", content: "SALTANAT — Telegram-бот с материалами для педагога: каталог и приём заказов." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:title", content: "Print KZ Art" },
-      { name: "twitter:description", content: "Print KZ Art — Telegram-бот для продажи цифровых товаров: каталог и приём заказов." },
+      { name: "twitter:title", content: "SALTANAT | Материалы для педагога" },
+      { name: "twitter:description", content: "SALTANAT — Telegram-бот с материалами для педагога: каталог и приём заказов." },
     ],
     links: [
       {
