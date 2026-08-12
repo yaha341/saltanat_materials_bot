@@ -251,7 +251,8 @@ async function addToCart(telegram_id: number, product_id: string) {
       .update({ quantity: (existing.quantity as number) + 1 })
       .eq("id", existing.id);
   } else {
-    await s.from("cart_items").insert({ telegram_id, product_id, quantity: 1 });
+    const user_key = `tg_${telegram_id}`;
+    await s.from("cart_items").insert({ user_key, telegram_id, product_id, quantity: 1 });
   }
 }
 
@@ -727,7 +728,7 @@ export async function handleUpdate(update: any) {
       }
       if (data === "clear") {
         const s = await db();
-        await s.from("cart_items").delete().eq("telegram_id", from_id);
+        await s.from("cart_items").delete().eq("user_key", `tg_${from_id}`);
         await tg("sendMessage", { chat_id, text: "🗑 Корзина очищена." });
         return;
       }
