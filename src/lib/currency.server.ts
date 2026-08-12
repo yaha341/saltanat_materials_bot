@@ -21,9 +21,22 @@ async function loadCache(): Promise<Cached | null> {
 
 async function saveCache(c: Cached) {
   const { supabaseAdmin } = await import("@/integrations-supabase/client.server");
-  await supabaseAdmin
+  const value = JSON.stringify(c);
+
+  // Не upsert: ON CONFLICT обязан назвать существующее ограничение, а ключ
+  // app_settings в общей базе составной — (bot_id, key). Update-then-insert
+  // работает при любой схеме ключей. Проигранная гонка лишь перезапросит курс.
+  const { data: existing } = await supabaseAdmin
     .from("app_settings")
-    .upsert({ key: CACHE_KEY, value: JSON.stringify(c) }, { onConflict: "key" });
+    .select("key")
+    .eq("key", CACHE_KEY)
+    .maybeSingle();
+
+  if (existing) {
+    await supabaseAdmin.from("app_settings").update({ value }).eq("key", CACHE_KEY);
+  } else {
+    await supabaseAdmin.from("app_settings").insert({ key: CACHE_KEY, value });
+  }
 }
 
 async function fetchRates(): Promise<Record<string, number>> {

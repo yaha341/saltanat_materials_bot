@@ -58,7 +58,9 @@ async function upsertUser(from: {
         language_code: from.language_code ?? null,
         platform: 'telegram'
       },
-      { onConflict: "user_key" },
+      // Ключ в общей базе составной: один и тот же человек в Telegram может
+      // быть покупателем у разных клиентов.
+      { onConflict: "bot_id,user_key" },
     )
     .select("*")
     .single();
@@ -101,8 +103,10 @@ async function showCategories(chat_id: number, parentId: string | null, userCoun
     .order("sort_order")
     .order("name");
   const { data: products } = parentId
-    ? await productsQuery.contains("category_ids", [parentId])
-    : await productsQuery.eq("category_ids", []);
+    // В общей базе category_ids — jsonb, а не uuid[]: фильтр принимает
+    // JSON-строку, иначе товары просто не найдутся в категории.
+    ? await productsQuery.contains("category_ids", JSON.stringify([parentId]))
+    : await productsQuery.eq("category_ids", "[]");
 
   let targetCurrency = "KZT";
   if (userCountryCode) {

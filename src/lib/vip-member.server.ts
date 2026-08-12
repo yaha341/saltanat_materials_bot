@@ -27,7 +27,7 @@ export async function assignMemberTariff(
       assigned_at: new Date().toISOString(),
       assigned_source: source,
     },
-    { onConflict: "telegram_id" },
+    { onConflict: "bot_id,telegram_id" },
   );
   if (error) console.error("[vip-member] assign failed", error);
 }

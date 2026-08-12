@@ -94,7 +94,7 @@ export async function blockTelegramUser(
       reason: opts?.reason?.trim() || null,
       blocked_at: new Date().toISOString(),
     },
-    { onConflict: "telegram_id" },
+    { onConflict: "bot_id,telegram_id" },
   );
   if (error) throw new Error(error.message);
 
