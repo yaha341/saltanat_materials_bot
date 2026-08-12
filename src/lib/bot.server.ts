@@ -92,6 +92,18 @@ async function sendMain(chat_id: number, text = "Выберите раздел:"
   await tg("sendMessage", { chat_id, text, reply_markup: mainMenu() });
 }
 
+/**
+ * Сквозной номер заказа в пределах этого бота — то, что видит покупатель.
+ * Внутренний orders.id общий на всю базу и продолжается сквозь всех клиентов,
+ * поэтому показывать его нельзя: у нового клиента первый заказ выглядел бы
+ * как продолжение чужой нумерации.
+ */
+async function displayNoFor(orderId: number): Promise<number> {
+  const s = await db();
+  const { data } = await s.from("orders").select("order_no").eq("id", orderId).maybeSingle();
+  return ((data as any)?.order_no as number) ?? orderId;
+}
+
 async function showCategories(chat_id: number, parentId: string | null, userCountryCode?: string, offset = 0) {
   const s = await db();
   const q = s.from("categories").select("id, name").order("sort_order").order("name");
@@ -474,7 +486,7 @@ async function placeOrder(chat_id: number, user: BotUser, country_code: string) 
 
   await setState(telegram_id, { mode: "awaiting_proof", pending_order_id: order.id as number });
 
-  const text = `🧾 <b>Заказ #${order.id}</b> создан.\n\nСумма к оплате: <b>${total} ${currency}</b>\n\n${method!.instructions}\n\nПосле оплаты <b>пришлите скриншот</b> (фото) в этот чат — продавец проверит и пришлёт файлы.`;
+  const text = `🧾 <b>Заказ #${(order as any).order_no ?? order.id}</b> создан.\n\nСумма к оплате: <b>${total} ${currency}</b>\n\n${method!.instructions}\n\nПосле оплаты <b>пришлите скриншот</b> (фото) в этот чат — продавец проверит и пришлёт файлы.`;
 
   if (method?.qr_code_path) {
     await tg("sendPhoto", {
@@ -534,7 +546,7 @@ async function notifyAdminNewOrder(orderId: number, proofFileId: string | null, 
     }
   }
 
-  const text = `🆕 <b>Новый заказ #${order.id}</b>
+  const text = `🆕 <b>Новый заказ #${(order as any).order_no ?? order.id}</b>
 
 👤 ${escapeHtml(order.display_name as string)}${order.username ? ` (@${escapeHtml(order.username)})` : ""}
 📞 ${escapeHtml((order.contact as string) || "—")}
@@ -559,7 +571,7 @@ ${escapeHtml(itemsText)}
         await tg("sendPhoto", {
           chat_id: adminChatId,
           photo: coverUrls[0],
-          caption: `📦 <b>Материалы заказа #${order.id}</b>\n\n${escapeHtml(itemsText)}\n\n💰 <b>Итого: ${order.total} ${order.currency}</b>`,
+          caption: `📦 <b>Материалы заказа #${(order as any).order_no ?? order.id}</b>\n\n${escapeHtml(itemsText)}\n\n💰 <b>Итого: ${order.total} ${order.currency}</b>`,
           parse_mode: "HTML",
         });
       } else if (coverUrls.length > 1) {
@@ -570,7 +582,7 @@ ${escapeHtml(itemsText)}
             media: u,
             ...(idx === 0
               ? {
-                  caption: `📦 <b>Материалы заказа #${order.id}</b>\n\n${escapeHtml(itemsText)}\n\n💰 <b>Итого: ${order.total} ${order.currency}</b>`,
+                  caption: `📦 <b>Материалы заказа #${(order as any).order_no ?? order.id}</b>\n\n${escapeHtml(itemsText)}\n\n💰 <b>Итого: ${order.total} ${order.currency}</b>`,
                   parse_mode: "HTML",
                 }
               : {}),
@@ -659,7 +671,7 @@ async function showMyOrders(chat_id: number, telegram_id: number) {
   const s = await db();
   const { data } = await s
     .from("orders")
-    .select("id, status, total, currency, created_at")
+    .select("id, order_no, status, total, currency, created_at")
     .eq("user_key", `tg_${telegram_id}`)
     .order("created_at", { ascending: false })
     .limit(20);
@@ -676,7 +688,7 @@ async function showMyOrders(chat_id: number, telegram_id: number) {
   const text = data
     .map(
       (o) =>
-        `#${o.id} — ${o.total} ${o.currency} — ${statusMap[o.status as string] || o.status}`,
+        `#${(o as any).order_no ?? o.id} — ${o.total} ${o.currency} — ${statusMap[o.status as string] || o.status}`,
     )
     .join("\n");
   await tg("sendMessage", { chat_id, text: `📋 Ваши заказы:\n\n${text}` });
@@ -807,10 +819,11 @@ export async function handleUpdate(update: any) {
 
       if (data.startsWith("confirm:")) {
         const orderId = Number(data.slice(8));
+        const shownNo = await displayNoFor(orderId);
         const { deliverOrder } = await import("./orders.functions");
         try {
           await deliverOrder(orderId);
-          await tg("sendMessage", { chat_id, text: `✅ Заказ #${orderId} выдан.` });
+          await tg("sendMessage", { chat_id, text: `✅ Заказ #${shownNo} выдан.` });
         } catch (e: any) {
           await tg("sendMessage", { chat_id, text: `Ошибка: ${e.message}` });
         }
@@ -823,15 +836,16 @@ export async function handleUpdate(update: any) {
           .from("orders")
           .update({ status: "rejected" })
           .eq("id", orderId)
-          .select("telegram_id")
+          .select("telegram_id, order_no")
           .single();
+        const rejectedNo = (order as any)?.order_no ?? orderId;
         if (order) {
           await tg("sendMessage", {
             chat_id: order.telegram_id,
-            text: `❌ Ваш заказ #${orderId} отклонён. Если это ошибка — напишите продавцу.`,
+            text: `❌ Ваш заказ #${rejectedNo} отклонён. Если это ошибка — напишите продавцу.`,
           });
         }
-        await tg("sendMessage", { chat_id, text: `Заказ #${orderId} отклонён.` });
+        await tg("sendMessage", { chat_id, text: `Заказ #${rejectedNo} отклонён.` });
         return;
       }
       return;
@@ -943,7 +957,7 @@ export async function handleUpdate(update: any) {
       if (proofSaved) {
         await tg("sendMessage", {
           chat_id,
-          text: `📨 Спасибо! Чек получен. Заказ #${orderId} отправлен на проверку. Как только продавец подтвердит оплату — бот пришлёт файлы.`,
+          text: `📨 Спасибо! Чек получен. Заказ #${await displayNoFor(orderId)} отправлен на проверку. Как только продавец подтвердит оплату — бот пришлёт файлы.`,
           reply_markup: mainMenu(),
         });
         await notifyAdminNewOrder(orderId, proofFileId, proofKind);
@@ -955,7 +969,7 @@ export async function handleUpdate(update: any) {
           .eq("id", orderId);
         await tg("sendMessage", {
           chat_id,
-          text: `⚠️ Не удалось сохранить чек заказа #${orderId}. Продавец проверит заказ вручную. Если хотите — попробуйте отправить чек ещё раз.`,
+          text: `⚠️ Не удалось сохранить чек заказа #${await displayNoFor(orderId)}. Продавец проверит заказ вручную. Если хотите — попробуйте отправить чек ещё раз.`,
           reply_markup: mainMenu(),
         });
         await notifyAdminNewOrder(orderId, null, null);

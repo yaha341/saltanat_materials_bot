@@ -50,12 +50,12 @@ export const rejectOrder = createServerFn({ method: "POST" })
       .from("orders")
       .update({ status: "rejected", admin_note: data.note ?? null })
       .eq("id", data.id)
-      .select("telegram_id")
+      .select("telegram_id, order_no")
       .single();
     if (error) throw new Error(error.message);
     await tg("sendMessage", {
       chat_id: order!.telegram_id,
-      text: `❌ Ваш заказ #${data.id} отклонён.\n${data.note ? `\nПричина: ${data.note}\n` : ""}\nЕсли это ошибка — напишите продавцу.`,
+      text: `❌ Ваш заказ #${(order as any)?.order_no ?? data.id} отклонён.\n${data.note ? `\nПричина: ${data.note}\n` : ""}\nЕсли это ошибка — напишите продавцу.`,
     });
     return { ok: true as const };
   });
@@ -69,8 +69,9 @@ export const deleteOrder = createServerFn({ method: "POST" })
     await s.from("order_items").delete().eq("order_id", data.id);
     const { error } = await s.from("orders").delete().eq("id", data.id);
     if (error) throw new Error(error.message);
-    // Сбрасываем sequence чтобы следующий ID = max(id) + 1
-    await s.rpc("reset_orders_sequence");
+    // Последовательность orders.id больше не откатываем: она общая для всех
+    // клиентов базы, и сдвиг назад выдал бы номера, уже занятые чужими
+    // заказами. Покупателю виден order_no, а он свой у каждого бота.
     return { ok: true as const };
   });
 
@@ -87,7 +88,7 @@ export async function deliverOrder(orderId: number) {
 
   await tg("sendMessage", {
     chat_id: order.telegram_id,
-    text: `✅ Оплата подтверждена! Заказ #${order.id}.\nОтправляю ваши материалы...`,
+    text: `✅ Оплата подтверждена! Заказ #${(order as any).order_no ?? order.id}.\nОтправляю ваши материалы...`,
   });
 
   const items = order.order_items as Array<{

@@ -39,8 +39,8 @@ function OrdersPage() {
   const list = (orders.data ?? []) as any[];
   const [busy, setBusy] = useState<number | null>(null);
 
-  async function onConfirm(id: number) {
-    if (!confirm(`Подтвердить оплату заказа #${id} и выдать файлы?`)) return;
+  async function onConfirm(id: number, displayNo: number) {
+    if (!confirm(`Подтвердить оплату заказа #${displayNo} и выдать файлы?`)) return;
     setBusy(id);
     try {
       await confirmOrder({ data: { id } });
@@ -61,9 +61,9 @@ function OrdersPage() {
       setBusy(null);
     }
   }
-  async function onDelete(id: number) {
-    if (!confirm(`Удалить заказ #${id}? Это действие необратимо.`)) return;
-    if (!confirm(`Точно удалить заказ #${id}? Нумерация следующих заказов сбросится до текущего максимума.`)) return;
+  async function onDelete(id: number, displayNo: number) {
+    if (!confirm(`Удалить заказ #${displayNo}? Это действие необратимо.`)) return;
+    if (!confirm(`Точно удалить заказ #${displayNo}? Это нельзя отменить.`)) return;
     setBusy(id);
     try {
       await deleteOrder({ data: { id } });
@@ -121,7 +121,7 @@ function OrdersPage() {
             <div key={o.id} className="bg-card border rounded-lg p-4 space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-semibold">#{o.id}</span>
+                  <span className="font-semibold">#{o.order_no ?? o.id}</span>
                   <span className={`text-xs px-2 py-0.5 rounded ${st.cls}`}>{st.label}</span>
                   <span className="text-xs text-muted-foreground">
                     {new Date(o.created_at).toLocaleString("ru")}
@@ -156,7 +156,7 @@ function OrdersPage() {
               )}
               {(o.status === "awaiting_confirmation" || o.status === "awaiting_payment") && (
                 <div className="flex gap-2 pt-2">
-                  <Button onClick={() => onConfirm(o.id)} disabled={busy === o.id}>
+                  <Button onClick={() => onConfirm(o.id, o.order_no ?? o.id)} disabled={busy === o.id}>
                     ✅ Подтвердить и выдать
                   </Button>
                   <Button variant="destructive" onClick={() => onReject(o.id)} disabled={busy === o.id}>
@@ -165,7 +165,7 @@ function OrdersPage() {
                 </div>
               )}
               {o.status === "delivered" && (
-                <Button size="sm" variant="outline" onClick={() => onConfirm(o.id)}>
+                <Button size="sm" variant="outline" onClick={() => onConfirm(o.id, o.order_no ?? o.id)}>
                   Отправить файлы ещё раз
                 </Button>
               )}
@@ -183,7 +183,7 @@ function OrdersPage() {
                   size="sm"
                   variant="ghost"
                   className="text-muted-foreground hover:text-destructive"
-                  onClick={() => onDelete(o.id)}
+                  onClick={() => onDelete(o.id, o.order_no ?? o.id)}
                   disabled={busy === o.id}
                 >
                   🗑️ Удалить
