@@ -88,7 +88,13 @@ function mimeForFile(filename: string, fallback?: string): string {
   return MIME_BY_EXT[ext] || fallback || "application/octet-stream";
 }
 
-async function uploadFile(file: File, bucket: "product-images" | "product-files") {
+// fetch() gives no upload progress at all — XMLHttpRequest does, via
+// upload.onprogress, so the direct-to-Supabase PUT uses that instead.
+async function uploadFile(
+  file: File,
+  bucket: "product-images" | "product-files",
+  onProgress?: (percent: number) => void,
+): Promise<{ path: string; name: string }> {
   // 1. Получаем одноразовую ссылку для прямой загрузки от сервера
   const { path, name, signedUrl } = await getSignedUploadUrl({ data: { bucket, filename: file.name } });
 
@@ -98,19 +104,58 @@ async function uploadFile(file: File, bucket: "product-images" | "product-files"
   const contentType =
     bucket === "product-files" ? mimeForFile(file.name, file.type) : file.type || "application/octet-stream";
 
-  const resUpload = await fetch(signedUrl, {
-    method: "PUT",
-    body: file,
-    headers: {
-      "Content-Type": contentType,
-    },
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", signedUrl);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(xhr.responseText || `Upload failed HTTP ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error("Ошибка сети при загрузке"));
+    xhr.send(file);
   });
-  if (!resUpload.ok) {
-    const body = await resUpload.text();
-    throw new Error(body || `Upload failed HTTP ${resUpload.status}`);
-  }
 
   return { path, name };
+}
+
+type UploadStatus = { label: string; index: number; total: number; percent: number };
+
+async function uploadManyWithProgress(
+  files: FileList,
+  bucket: "product-images" | "product-files",
+  setStatus: (s: UploadStatus | null) => void,
+): Promise<{ path: string; name: string }[]> {
+  const list = Array.from(files);
+  const results: { path: string; name: string }[] = [];
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      const update = (percent: number) => setStatus({ label: f.name, index: i + 1, total: list.length, percent });
+      update(0);
+      results.push(await uploadFile(f, bucket, update));
+    }
+  } finally {
+    setStatus(null);
+  }
+  return results;
+}
+
+function UploadProgressBar({ status }: { status: UploadStatus | null }) {
+  if (!status) return null;
+  return (
+    <div className="space-y-1 mt-1">
+      <div className="text-xs text-muted-foreground">
+        Загружаю {status.index} из {status.total}: {status.label} — {status.percent}%
+      </div>
+      <div className="h-1.5 w-full bg-muted rounded overflow-hidden">
+        <div className="h-full bg-primary transition-[width]" style={{ width: `${status.percent}%` }} />
+      </div>
+    </div>
+  );
 }
 
 function MaterialFilesList({ files, onRemove }: { files: MaterialFile[]; onRemove: (idx: number) => void }) {
@@ -149,6 +194,9 @@ function ProductsPage() {
   const [images, setImages] = useState<Img[]>([]);
   const [materialFilesRu, setMaterialFilesRu] = useState<MaterialFile[]>([]);
   const [materialFilesKz, setMaterialFilesKz] = useState<MaterialFile[]>([]);
+  const [imagesUpload, setImagesUpload] = useState<UploadStatus | null>(null);
+  const [materialsRuUpload, setMaterialsRuUpload] = useState<UploadStatus | null>(null);
+  const [materialsKzUpload, setMaterialsKzUpload] = useState<UploadStatus | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Клиентская фильтрация по названию / ключевым словам / описанию.
@@ -203,13 +251,9 @@ function ProductsPage() {
 
   async function onImagesChange(files: FileList | null) {
     if (!files) return;
-    const uploaded: Img[] = [];
     try {
-      for (const f of Array.from(files)) {
-        const r = await uploadFile(f, "product-images");
-        uploaded.push({ image_path: r.path, sort_order: images.length + uploaded.length });
-      }
-      setImages([...images, ...uploaded]);
+      const uploaded = await uploadManyWithProgress(files, "product-images", setImagesUpload);
+      setImages([...images, ...uploaded.map((r, i) => ({ image_path: r.path, sort_order: images.length + i }))]);
     } catch (e: any) {
       alert("Ошибка загрузки фото: " + e.message);
     }
@@ -219,13 +263,10 @@ function ProductsPage() {
     if (!files) return;
     const setList = lang === "ru" ? setMaterialFilesRu : setMaterialFilesKz;
     const current = lang === "ru" ? materialFilesRu : materialFilesKz;
-    const uploaded: MaterialFile[] = [];
+    const setStatus = lang === "ru" ? setMaterialsRuUpload : setMaterialsKzUpload;
     try {
-      for (const f of Array.from(files)) {
-        const r = await uploadFile(f, "product-files");
-        uploaded.push({ file_path: r.path, file_name: r.name, sort_order: current.length + uploaded.length });
-      }
-      setList([...current, ...uploaded]);
+      const uploaded = await uploadManyWithProgress(files, "product-files", setStatus);
+      setList([...current, ...uploaded.map((r, i) => ({ file_path: r.path, file_name: r.name, sort_order: current.length + i }))]);
     } catch (e: any) {
       alert(`Ошибка загрузки файла${lang === "kz" ? " (KZ)" : ""}: ${e.message}`);
     }
@@ -414,8 +455,10 @@ function ProductsPage() {
               type="file"
               accept="image/*"
               multiple
+              disabled={!!imagesUpload}
               onChange={(e) => onImagesChange(e.target.files)}
             />
+            <UploadProgressBar status={imagesUpload} />
             <div className="flex flex-wrap gap-2 mt-2">
               {images.map((im, idx) => (
                 <div key={im.image_path} className="relative">
@@ -440,7 +483,8 @@ function ProductsPage() {
 
           <div className="space-y-2 pt-4 border-t">
             <Label htmlFor="file-ru">📄 Материал (Русский) — можно несколько файлов/фото</Label>
-            <Input id="file-ru" type="file" multiple onChange={(e) => onMaterialFilesChange(e.target.files, "ru")} />
+            <Input id="file-ru" type="file" multiple disabled={!!materialsRuUpload} onChange={(e) => onMaterialFilesChange(e.target.files, "ru")} />
+            <UploadProgressBar status={materialsRuUpload} />
             <MaterialFilesList files={materialFilesRu} onRemove={(idx) => setMaterialFilesRu(materialFilesRu.filter((_, i) => i !== idx))} />
             <div className="pt-2">
               <Label>Или внешняя ссылка на файл (Русский)</Label>
@@ -457,7 +501,8 @@ function ProductsPage() {
 
           <div className="space-y-2 pt-4 border-t">
             <Label htmlFor="file-kz">📄 Материал (Қазақша) — можно несколько файлов/фото</Label>
-            <Input id="file-kz" type="file" multiple onChange={(e) => onMaterialFilesChange(e.target.files, "kz")} />
+            <Input id="file-kz" type="file" multiple disabled={!!materialsKzUpload} onChange={(e) => onMaterialFilesChange(e.target.files, "kz")} />
+            <UploadProgressBar status={materialsKzUpload} />
             <MaterialFilesList files={materialFilesKz} onRemove={(idx) => setMaterialFilesKz(materialFilesKz.filter((_, i) => i !== idx))} />
             <div className="pt-2">
               <Label>Или внешняя ссылка на файл (Қазақша)</Label>
