@@ -214,7 +214,13 @@ export async function sendFileToUser(chat_id: number, path: string, downloadName
 
   let sentAsFile = false;
   
-  if (fileSize > 0 && fileSize < 15 * 1024 * 1024) {
+  // Облачный Telegram Bot API принимает документы до 50 МБ — это и есть
+  // потолок прямой отправки. Настраивается через DELIVERY_MAX_FILE_MB на
+  // случай Local Bot API, где предел выше. Что не влезло — уходит ссылкой.
+  const TG_MAX_BYTES =
+    Math.min(50, Math.max(1, Number(process.env.DELIVERY_MAX_FILE_MB) || 50)) * 1024 * 1024;
+
+  if (fileSize > 0 && fileSize < TG_MAX_BYTES) {
     try {
       const { data: dl, error: dlErr } = await supabaseAdmin.storage
         .from("product-files")
