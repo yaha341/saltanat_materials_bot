@@ -60,7 +60,23 @@ function readEnv() {
     console.error(`[Supabase] ${message}`);
     throw new Error(message);
   }
-  return { url, serviceKey, tenantKey: process.env.SUPABASE_TENANT_KEY?.trim() || null };
+  const tenantKey = process.env.SUPABASE_TENANT_KEY?.trim() || null;
+
+  // BOT_ID means this deployment belongs to one client of a shared database.
+  // Without the tenant key it would connect as service_role, which bypasses
+  // RLS and quietly exposes every other client's catalogue, orders and
+  // customers — the failure mode that actually happened once. Refuse to start
+  // instead: a loud error beats a silent leak. To roll back to unrestricted
+  // access, remove BOT_ID as well.
+  if (process.env.BOT_ID?.trim() && !tenantKey) {
+    const message =
+      "BOT_ID задан, а SUPABASE_TENANT_KEY — нет. Без него подключение идёт " +
+      "под service_role и видит данные всех клиентов. Добавьте SUPABASE_TENANT_KEY.";
+    console.error(`[Supabase] ${message}`);
+    throw new Error(message);
+  }
+
+  return { url, serviceKey, tenantKey };
 }
 
 function build(bearer: string) {
